@@ -1,0 +1,63 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QPW Hub</title><style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0a0f1a;color:#eef3ff}
+*{box-sizing:border-box}body{margin:0;background:#0a0f1a;min-height:100vh;font-size:17px;line-height:1.45}
+button,input,select,textarea{font:inherit}button{cursor:pointer}
+.wrap{max-width:760px;margin:auto;padding:16px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0}
+.brand{font-size:30px;font-weight:800}.brand b{color:#e9c873}
+.status{font-size:14px;color:#aab8cc;margin-top:4px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#58d68d;margin-right:6px}
+.panel{background:#111a2b;border:1px solid #2c3d59;border-radius:14px;padding:18px}
+.login{max-width:480px;margin:10vh auto}
+.login h1{margin:0 0 8px;font-size:26px}.login p{color:#b8c4d6}
+.field{width:100%;padding:14px;border-radius:10px;border:1px solid #51617b;background:#0d1726;color:#fff;min-height:52px;margin:6px 0}
+.btn{padding:13px 18px;border:1px solid #6f7f9a;border-radius:10px;background:#172740;color:#fff;min-height:52px;font-size:17px}
+.btn.primary{background:#d7b75d;color:#10151d;border-color:#e6ca79;font-weight:800}
+.btn:disabled{opacity:.5}
+.hidden{display:none!important}
+.notice{margin:12px 0;padding:12px 14px;border:1px solid #6c5f39;background:#262418;border-radius:10px;color:#f0dfaa;font-size:15px}
+.error{border-color:#8c4d49;background:#2b1719;color:#ffd5d2}
+h2.sec{font-size:13px;letter-spacing:.12em;color:#8fa0b8;margin:26px 0 10px;text-transform:uppercase}
+h2.sec b{color:#e9c873;margin-left:6px}
+.card{background:#111a2b;border:1px solid #2c3d59;border-radius:12px;padding:15px;margin:10px 0}
+.card strong{font-size:17px;display:block}
+.meta{font-size:14px;color:#9fafc6;margin-top:6px}
+.card .go{margin-top:10px}
+.empty{color:#6c7a90;font-size:15px;padding:10px 2px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.replytag{font-size:13px;color:#e9c873}
+#sendstatus{font-size:14px;color:#9fafc6}
+.footer{font-size:12px;color:#5f6d84;margin:26px 0 10px;text-align:center}
+textarea.field{min-height:96px;resize:vertical}
+label.check{display:flex;align-items:center;gap:8px;font-size:15px;color:#b8c4d6;margin:8px 0}
+label.check input{width:22px;height:22px}
+</style></head><body>
+<div id="login" class="wrap"><section class="panel login"><div class="brand"><b>QPW</b> HUB</div><h1>Private access</h1><p>Enter your access key.</p><input id="access" class="field" type="password" autocomplete="current-password" placeholder="Access key"><div class="row" style="margin-top:10px"><button id="enter" class="btn primary">Enter</button><span id="loginmsg" class="meta"></span></div></section></div>
+<div id="hub" class="hidden"><div class="wrap">
+<header class="top"><div><div class="brand"><b>QPW</b> HUB</div><div class="status"><span class="dot"></span>LIVE · <span id="stamp"></span></div></div><div class="row"><button id="refresh" class="btn">Refresh</button><button id="logout" class="btn">Lock</button></div></header>
+<div id="notice" class="notice">Connecting…</div>
+<h2 class="sec">Needs you<b id="n-need"></b></h2><div id="needs"></div>
+<h2 class="sec">Active<b id="n-active"></b></h2><div id="actives"></div>
+<h2 class="sec">Messages</h2><div id="messages"></div>
+<section class="panel" style="margin-top:26px"><h2 class="sec" style="margin-top:0">Send a message</h2><input id="recipient" class="field" placeholder="Who (e.g. luna)"><input id="topic" class="field" placeholder="Topic"><textarea id="body" class="field" placeholder="Message"></textarea><label class="check"><input id="replyreq" type="checkbox" checked> Ask for a reply</label><div class="row"><button id="send" class="btn primary">Send</button><span id="replytag" class="replytag"></span><span id="sendstatus"></span></div></section>
+<div class="footer">Private · no auto-refresh · keys stay on your device</div>
+</div></div>
+<script>
+(function(){
+var API='https://ypfhcqeispdunewubxjm.supabase.co/functions/v1/qpw-hub-live';
+var token=sessionStorage.getItem('qpw_token')||'',state=null,replyTo=null;
+function $(id){return document.getElementById(id)}
+function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function age(ts){var n=Date.parse(ts);if(!isFinite(n))return'';var m=Math.floor((Date.now()-n)/60000);return m<1?'now':m<60?m+'m ago':m<1440?Math.floor(m/60)+'h ago':Math.floor(m/1440)+'d ago'}
+function needs(){var t=state.tasks.filter(function(x){return x.status==='blocked'});var m=state.messages.filter(function(x){return x.status==='awaiting_approval'||(x.recipient==='master-indy'&&x.requires_reply&&['waiting','delivered'].indexOf(x.status)>=0)});return t.concat(m)}
+function actives(){return state.tasks.filter(function(x){return x.status==='in_progress'||x.status==='ready_for_review'})}
+function card(o){var title=esc(o.title||o.topic||'Untitled');var meta=esc([(o.sender&&o.recipient)?o.sender+' → '+o.recipient:o.owner,o.status,age(o.updated_at||o.created_at)].filter(Boolean).join(' · '));var sub=(o.blocker||o.next_action)?'<div class="meta">'+esc(o.blocker||o.next_action)+'</div>':'';var rep=o.message_id?'<div class="go"><button class="btn" data-reply="'+esc(o.message_id)+'" data-to="'+esc(o.sender||'')+'" data-topic="'+esc(o.topic||'')+'">Reply</button></div>':'';return '<div class="card"><strong>'+title+'</strong><div class="meta">'+meta+'</div>'+sub+rep+'</div>'}
+function render(){if(!state)return;var n=needs(),a=actives();$('n-need').textContent=n.length;$('n-active').textContent=a.length;$('needs').innerHTML=n.length?n.map(card).join(''):'<div class="empty">Nothing needs you right now.</div>';$('actives').innerHTML=a.length?a.map(card).join(''):'<div class="empty">Nothing active.</div>';var msgs=state.messages.slice().sort(function(x,y){return Date.parse(y.created_at)-Date.parse(x.created_at)}).slice(0,25);$('messages').innerHTML=msgs.map(function(m){return '<div class="card"><strong>'+esc(m.topic)+'</strong><div class="meta">'+esc(m.sender)+' → '+esc(m.recipient)+' · '+age(m.created_at)+(m.requires_reply?' · wants reply':'')+'</div></div>'}).join('')||'<div class="empty">No messages.</div>';Array.prototype.forEach.call(document.querySelectorAll('[data-reply]'),function(b){b.onclick=function(){replyTo=b.getAttribute('data-reply');$('recipient').value=b.getAttribute('data-to');$('topic').value='RE: '+b.getAttribute('data-topic');$('replytag').textContent='Replying to '+replyTo;$('body').focus();window.scrollTo(0,document.body.scrollHeight)}})}
+function setNotice(t,err){var n2=$('notice');n2.textContent=t;n2.className='notice'+(err?' error':'')}
+function refresh(){if(!token)return;$('refresh').disabled=true;setNotice('Refreshing…');fetch(API+'?api=state',{headers:{'x-qpw-token':token},cache:'no-store'}).then(function(r){if(r.status===401){sessionStorage.removeItem('qpw_token');token='';showLogin('Access key rejected.');return null}if(!r.ok)throw 0;return r.json()}).then(function(d){if(!d)return;state=d;setNotice('LIVE · updated just now · manual refresh only');$('stamp').textContent='Updated '+new Date(state.fetched_at).toLocaleString();render()}).catch(function(){setNotice('Could not refresh.',true)}).then(function(){$('refresh').disabled=false})}
+function showLogin(msg){$('login').classList.remove('hidden');$('hub').classList.add('hidden');if(msg)$('loginmsg').textContent=msg}
+function enter(){var v=$('access').value.trim();if(!v){$('loginmsg').textContent='Enter the private access key.';return}token=v;sessionStorage.setItem('qpw_token',v);$('login').classList.add('hidden');$('hub').classList.remove('hidden');refresh()}
+function send(){var to=$('recipient').value.trim().toLowerCase(),topic=$('topic').value.trim(),body=$('body').value.trim();if(!to||!topic||!body){$('sendstatus').textContent='Fill in who, topic, and message.';return}var key=(crypto.randomUUID?crypto.randomUUID():String(Date.now())).replace(/-/g,'');$('send').disabled=true;$('sendstatus').textContent='Sending…';fetch(API+'?api=send',{method:'POST',headers:{'Content-Type':'application/json','x-qpw-token':token},body:JSON.stringify({recipient:to,topic:topic,body:body,reply_to_message_id:replyTo,requires_reply:$('replyreq').checked,idempotency_key:key})}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(out){$('sendstatus').textContent=(out.duplicate?'Already sent: ':'Sent: ')+out.message_id;$('body').value='';replyTo=null;$('replytag').textContent='';refresh()}).catch(function(){$('sendstatus').textContent='Send failed.'}).then(function(){$('send').disabled=false})}
+$('enter').onclick=enter;$('access').onkeydown=function(e){if(e.key==='Enter')enter()};$('refresh').onclick=refresh;$('send').onclick=send;$('logout').onclick=function(){sessionStorage.removeItem('qpw_token');token='';state=null;showLogin('Locked.')};if(token){$('login').classList.add('hidden');$('hub').classList.remove('hidden');refresh()}else showLogin('Private Hub — your key only.');
+})();
+<\/script></body></html>
