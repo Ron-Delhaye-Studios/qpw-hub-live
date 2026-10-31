@@ -1,0 +1,23 @@
+name: WhatsApp bridge checks
+on:
+  pull_request:
+    paths:
+      - 'services/whatsapp/**'
+      - '.github/workflows/whatsapp-bridge.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'services/whatsapp/**'
+      - '.github/workflows/whatsapp-bridge.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest -v test_bridge.py
+        working-directory: services/whatsapp

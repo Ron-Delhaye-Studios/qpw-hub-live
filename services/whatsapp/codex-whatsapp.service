@@ -1,0 +1,27 @@
+# Deployment template: install code separately, provision /etc/codex-whatsapp.env privately.
+[Unit]
+Description=CODEX Meta WhatsApp bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codex-whatsapp
+Group=codex-whatsapp
+WorkingDirectory=/opt/codex-whatsapp
+EnvironmentFile=/etc/codex-whatsapp.env
+Environment=BRIDGE_DB=/var/lib/codex-whatsapp/conversations.sqlite
+ExecStart=/usr/bin/python3 /opt/codex-whatsapp/bridge.py
+Restart=on-failure
+RestartSec=5
+StateDirectory=codex-whatsapp
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/codex-whatsapp
+
+[Install]
+WantedBy=multi-user.target
