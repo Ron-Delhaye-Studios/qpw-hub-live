@@ -59,7 +59,9 @@ class Settings:
         if not re.fullmatch(r'[0-9]+', values[3]) or not re.fullmatch(r'v[0-9]+\.0', values[4]):
             raise ValueError('Invalid Meta phone ID or Graph API version')
         db_path = Path(values[8])
-        if not db_path.is_absolute() or db_path.resolve().is_relative_to(Path(__file__).resolve().parents[2]):
+        code_dir = Path(__file__).resolve().parent
+        static_root = code_dir.parent.parent if code_dir.name == 'whatsapp' and code_dir.parent.name == 'services' else code_dir
+        if not db_path.is_absolute() or db_path.resolve().is_relative_to(static_root):
             raise ValueError('BRIDGE_DB must be absolute and outside the repository/static web root')
         return cls(*values[:7], senders, values[8])
 

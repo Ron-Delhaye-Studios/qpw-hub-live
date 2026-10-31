@@ -176,6 +176,25 @@ class BridgeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Missing configuration names'):
                 Settings.from_env()
 
+    def env(self):
+        return {'META_APP_SECRET': 'test-secret', 'META_VERIFY_TOKEN': 'test-verify',
+                'META_ACCESS_TOKEN': 'test-meta', 'META_PHONE_NUMBER_ID': '12345',
+                'META_GRAPH_VERSION': 'v23.0', 'OPENAI_API_KEY': 'test-openai',
+                'OPENAI_MODEL': 'configured-test-model', 'WHATSAPP_ALLOWED_SENDERS': '15555550123',
+                'BRIDGE_DB': self.s.db_path}
+
+    def test_config_accepts_deployed_layout_and_private_volume(self):
+        with patch.dict(os.environ, self.env(), clear=True), patch('bridge.__file__', '/opt/codex-whatsapp/bridge.py'):
+            self.assertEqual(Settings.from_env().db_path, self.s.db_path)
+
+    def test_config_rejects_database_inside_static_repository(self):
+        from pathlib import Path
+        env = self.env()
+        env['BRIDGE_DB'] = str(Path(__file__).resolve().parents[2] / 'unsafe.sqlite')
+        with patch.dict(os.environ, env, clear=True):
+            with self.assertRaisesRegex(ValueError, 'outside the repository'):
+                Settings.from_env()
+
     def test_real_webhook_handshake_signature_and_durable_ack(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), make_handler(self.s, self.store))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
