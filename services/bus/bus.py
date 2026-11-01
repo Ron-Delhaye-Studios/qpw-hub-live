@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 LIMIT = 32768
 REQUIRED = {'schema_version','message_id','sender','recipient','topic','summary','created_at',
             'requires_reply','gate','visibility','artifact_refs'}
-OPTIONAL = {'task_id','reply_to_message_id'}
+OPTIONAL = {'task_id','reply_to_message_id','work'}
 ARTIFACT_KEYS = {'kind','uri','label','sha256','base_commit','version','drive_id'}
 
 
@@ -53,9 +53,11 @@ def validate(e):
     if not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z', e['created_at']):
         raise ValueError('created_at must be UTC ISO8601')
     datetime.fromisoformat(e['created_at'].replace('Z','+00:00'))
-    for k in OPTIONAL:
+    for k in ['task_id','reply_to_message_id']:
         if e.get(k) is not None and (not isinstance(e[k], str) or not 1 <= len(e[k]) <= 200):
             raise ValueError('invalid threading field')
+    if 'work' in e:
+        validate_work(e['work'])
     if not isinstance(e['artifact_refs'], list) or len(e['artifact_refs']) > 10:
         raise ValueError('invalid artifact list')
     for ref in e['artifact_refs']:
@@ -78,8 +80,41 @@ def validate(e):
     return e
 
 
+def validate_work(work):
+    if not isinstance(work,dict) or not {'kind','evidence'}<=work.keys() or not work.keys()<={'kind','evidence','do','deliver','blocked_by','constraints'}:
+        raise ValueError('invalid work fields')
+    if not isinstance(work['kind'],str) or work['kind'] not in {'task','result','blocker','decision','info'}:
+        raise ValueError('invalid work kind')
+    if not isinstance(work['evidence'],str) or work['evidence'] not in {'OBSERVED','REPORTED','INFERRED','UNKNOWN'}:
+        raise ValueError('invalid evidence label')
+    for k in ['do','deliver','blocked_by']:
+        if k in work and (not isinstance(work[k],str) or not 1<=len(work[k].strip())<=300):
+            raise ValueError('invalid work instruction')
+    constraints=work.get('constraints',[])
+    if not isinstance(constraints,list) or len(constraints)>6 or any(not isinstance(c,str) or not 1<=len(c.strip())<=160 for c in constraints):
+        raise ValueError('invalid work constraints')
+    if work['kind']=='task' and not {'do','deliver'}<=work.keys():
+        raise ValueError('task requires Do and Deliver')
+    if work['kind']=='result' and 'deliver' not in work:raise ValueError('result requires Deliver')
+    if work['kind']=='blocker' and 'blocked_by' not in work:raise ValueError('blocker requires exact missing input')
+    return work
+
+
+def readable_body(e):
+    """One clear backward-compatible body; evidence labels remain the sender's claims."""
+    work=e.get('work')
+    if not work:return e['summary']+'\n\n— '+e['sender'].upper()
+    lines=[work['kind'].upper()]
+    for k,label in [('do','Do'),('deliver','Deliver'),('blocked_by','Blocked by')]:
+        if k in work:lines.append(label+': '+work[k])
+    for c in work.get('constraints',[]):lines.append('Constraint: '+c)
+    lines.extend(['Evidence (sender): '+work['evidence'],'Context: '+e['summary'],
+                  'Reply needed: '+('yes' if e['requires_reply'] else 'no'),'— '+e['sender'].upper()])
+    return '\n'.join(lines)
+
+
 def make_envelope(sender, recipient, topic, summary, *, gate='AUTO_PEER', visibility='private',
-                  artifact_refs=None, task_id=None, reply_to_message_id=None, requires_reply=False):
+                  artifact_refs=None, task_id=None, reply_to_message_id=None, requires_reply=False, work=None):
     now = datetime.now(timezone.utc)
     e = dict(schema_version='0.3', message_id=f'BUS-{now:%Y%m%d}-{sender.upper()}-{uuid.uuid4().hex.upper()}',
              sender=sender, recipient=recipient, topic=topic, summary=summary,
@@ -88,6 +123,7 @@ def make_envelope(sender, recipient, topic, summary, *, gate='AUTO_PEER', visibi
     for k,v in [('task_id',task_id),('reply_to_message_id',reply_to_message_id)]:
         if v is not None:
             e[k]=v
+    if work is not None:e['work']=work
     return validate(e)
 
 
@@ -201,12 +237,24 @@ class SurrogateClient:
         try:return self.api.send_envelope(e)
         except SystemExit:raise TransportError(False) from None
 
-    def inbox(self,limit=20):
-        if not 1<=limit<=100:raise ValueError('invalid limit')
+    def get(self,mid):
         try:
-            return self.api.call('GET','/bus_messages',params={'recipient':'eq.'+self.node,
+            rows=self.api.call('GET','/bus_messages',params={'message_id':'eq.'+mid,
+                'recipient':'eq.'+self.node,'limit':'1'})
+        except SystemExit:raise TransportError(False) from None
+        if not rows:raise ValueError('message not found in configured node inbox')
+        return rows[0]
+
+    def inbox(self,limit=20,after=None):
+        if not 1<=limit<=100:raise ValueError('invalid limit')
+        params={'recipient':'eq.'+self.node,
                 'status':'eq.waiting','order':'created_at.asc,message_id.asc','limit':str(limit),
-                'select':'message_id,sender,recipient,topic,task_id,reply_to_message_id,status,requires_reply,created_at,payload'})
+                'select':'message_id,sender,recipient,topic,task_id,reply_to_message_id,status,requires_reply,created_at,payload'}
+        if after:
+            from brief import cursor_filter
+            params['or']=cursor_filter(after)
+        try:
+            return self.api.call('GET','/bus_messages',params=params)
         except SystemExit:raise TransportError(False) from None
 
     def ack(self,mid,state):
@@ -282,12 +330,21 @@ def main():
     compose.add_argument('--gate',default='AUTO_PEER');compose.add_argument('--shared',action='store_true')
     compose.add_argument('--artifact-refs',help='Path to a small JSON artifact-reference array')
     compose.add_argument('--task-id');compose.add_argument('--reply-to');compose.add_argument('--requires-reply',action='store_true')
+    compose.add_argument('--kind',choices=['task','result','blocker','decision','info'])
+    compose.add_argument('--do');compose.add_argument('--deliver');compose.add_argument('--blocked-by')
+    compose.add_argument('--constraint',action='append',default=[])
+    compose.add_argument('--evidence',choices=['OBSERVED','REPORTED','INFERRED','UNKNOWN'],default='UNKNOWN')
     check=sub.add_parser('check');check.add_argument('file')
     send=sub.add_parser('send');send.add_argument('file')
     inbox=sub.add_parser('inbox');inbox.add_argument('--limit',type=int,default=20)
     ack=sub.add_parser('ack');ack.add_argument('message_id');ack.add_argument('state',choices=['delivered','processed'])
     sync=sub.add_parser('sync');sync.add_argument('--spool',required=True);sync.add_argument('--allow-import',action='store_true')
     verify=sub.add_parser('verify');verify.add_argument('file');verify.add_argument('sha256')
+    brief=sub.add_parser('brief');brief.add_argument('--state',required=True)
+    brief.add_argument('--budget-chars',type=int,default=6000);brief.add_argument('--limit',type=int,default=100)
+    brief.add_argument('--after');brief.add_argument('--all',action='store_true');brief.add_argument('--cache',action='store_true')
+    viewed=sub.add_parser('brief-ack');viewed.add_argument('--state',required=True);viewed.add_argument('receipt')
+    detail=sub.add_parser('brief-show');detail.add_argument('--state',required=True);detail.add_argument('message_id');detail.add_argument('--refresh',action='store_true')
     a=p.parse_args()
     if a.command=='compose':
         refs=None
@@ -295,9 +352,17 @@ def main():
             data=Path(a.artifact_refs).read_bytes()
             if len(data)>LIMIT:raise ValueError('artifact-reference file too large')
             refs=json.loads(data,object_pairs_hook=unique_keys)
+        work=None
+        if a.kind:
+            work={'kind':a.kind,'evidence':a.evidence,'constraints':a.constraint}
+            for k in ['do','deliver','blocked_by']:
+                value=getattr(a,k)
+                if value is not None:work[k]=value
+        elif a.do or a.deliver or a.blocked_by or a.constraint or a.evidence!='UNKNOWN':
+            raise ValueError('work fields require --kind')
         e=make_envelope(a.sender,a.recipient,a.topic,a.summary,gate=a.gate,
             visibility='shared' if a.shared else 'private',task_id=a.task_id,
-            reply_to_message_id=a.reply_to,requires_reply=a.requires_reply,artifact_refs=refs)
+            reply_to_message_id=a.reply_to,requires_reply=a.requires_reply,artifact_refs=refs,work=work)
         dest=Path(a.outbox)/(e['message_id']+'.json');atomic_write(dest,e);print(dest)
     elif a.command=='check':
         e=read_envelope(a.file);print(json.dumps({'message_id':e['message_id'],'valid':True}))
@@ -305,6 +370,18 @@ def main():
         if not re.fullmatch('[0-9a-f]{64}',a.sha256):raise ValueError('invalid SHA256')
         if hashlib.sha256(Path(a.file).read_bytes()).hexdigest()!=a.sha256:raise ValueError('artifact hash mismatch')
         print('SHA256 MATCH')
+    elif a.command in {'brief','brief-ack','brief-show'}:
+        from brief import BriefStore,render_packet
+        store=BriefStore(a.state)
+        if a.command=='brief':
+            rows=store.cached() if a.cache else SurrogateClient.from_env().inbox(a.limit,a.after)
+            packet=render_packet(rows,budget=a.budget_chars,store=store,include_seen=a.all,
+                page_limit=None if a.cache else a.limit,source='local cache; may be stale' if a.cache else 'canonical inbox read; bounded batch')
+            print(packet['text'])
+        elif a.command=='brief-ack':print(json.dumps(store.ack(a.receipt)))
+        else:
+            if a.refresh:store.cache([SurrogateClient.from_env().get(a.message_id)])
+            print(json.dumps(store.show(a.message_id),ensure_ascii=False))
     else:
         rpc=SurrogateClient.from_env()
         if a.command=='send':print(json.dumps(rpc.send(read_envelope(a.file))))

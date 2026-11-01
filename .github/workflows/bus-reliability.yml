@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m unittest -v test_bus.py
+      - run: python -m unittest -v test_bus.py test_brief.py
         working-directory: services/bus
       - run: npm ci --ignore-scripts
         working-directory: services/bus

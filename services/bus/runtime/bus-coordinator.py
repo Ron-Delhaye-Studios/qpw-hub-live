@@ -22,6 +22,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from brief import source_body_of,BriefStore,render_packet
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -82,7 +85,8 @@ def fetch_inbox():
         rows=json.loads(out.stdout)
         if not isinstance(rows,list):raise ValueError('not rows')
         msgs=[{'message_id':r['message_id'],'sender':r['sender'],'topic':r['topic'],
-               'ts':r['created_at'],'full':{'body':(r.get('payload') or {}).get('body','') or '',
+               'ts':r['created_at'],'full':{'body':source_body_of(r.get('payload')),'payload':r.get('payload') or {},
+                   'requires_reply':r.get('requires_reply') is True,
                    'reply_to':r.get('reply_to_message_id'),'task_id':r.get('task_id')}} for r in rows]
     except (ValueError,KeyError,TypeError):
         return None,'inbox returned invalid structured data; no messages acknowledged'
@@ -192,12 +196,15 @@ def fetch_coordination_tasks():
         return []
 
 
-def main():
+def main(brief=False,budget=6000):
     ledger = load_json(LEDGER, {'entries': []})
     state = load_json(STATE, {'messages': {}})
     msgs, err = fetch_inbox()
     coord_tasks = fetch_coordination_tasks()
     if err:
+        if brief:
+            print('BUS unavailable; no receipt changed. '+err)
+            return
         print(json.dumps({'new': [], 'overdue': [], 'coordination_tasks': coord_tasks,
                           'error': err}))
         return
@@ -241,6 +248,21 @@ def main():
     save_json(STATE, state)
     pending=[{'message_id':mid,'sender':m.get('sender'),'topic':m.get('topic'),'status':m.get('status')}
         for mid,m in state['messages'].items() if m.get('status') not in ('answered','done')]
+    if brief:
+        rows=[]
+        for mid,m in state['messages'].items():
+            if m.get('status') in ('answered','done'):continue
+            full=m.get('full') or {}
+            rows.append({'message_id':mid,'sender':m.get('sender'),'recipient':'luna',
+                'topic':m.get('topic'),'created_at':m.get('ts',''),'status':m.get('status'),
+                'task_id':full.get('task_id'),'reply_to_message_id':full.get('reply_to'),
+                'requires_reply':full.get('requires_reply',False),
+                'payload':full.get('payload',{'body':full.get('body','')})})
+        note=f'Coordination ledger: {len(coord_tasks)} rows returned separately; use full output for that source.\n'
+        packet=render_packet(rows,budget=budget-len(note),store=BriefStore(os.path.join(OUTBOX,'bus-brief.sqlite')),
+            source='private coordinator state; transport receipt is not task completion')
+        print(note+packet['text'],end='')
+        return
     print(json.dumps({'new': new_out, 'overdue': overdue,
                       'coordination_tasks': coord_tasks,
                       'pending':pending[:50],'pending_count':len(pending),
@@ -248,5 +270,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import argparse
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--brief',action='store_true');parser.add_argument('--budget-chars',type=int,default=6000)
+    args=parser.parse_args()
+    main(brief=args.brief,budget=args.budget_chars)
 

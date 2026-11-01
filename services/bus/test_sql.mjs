@@ -71,6 +71,16 @@ for (const patch of [{requires_reply:'true'},{gate:'AUTO_PUBLISH'},{visibility:'
 await send(envelope('ARTIFACT',{artifact_refs:[{kind:'repo_snapshot',uri:'https://drive.google.com/file/d/example/view',
   label:'pinned main',sha256:'a'.repeat(64),base_commit:'b'.repeat(40)}]}));
 checks++;
+const work={kind:'task',evidence:'REPORTED',do:'Verify then file the PR.',deliver:'PR URL and hash evidence.',constraints:['Do not merge.']};
+await send(envelope('WORK',{work}));
+const body=(await db.query("select payload->>'body' body from public.bus_messages where message_id='BUS-20261101-TEST-WORK'")).rows[0].body;
+ok(body.includes('Do: Verify then file the PR.')&&body.includes('Constraint: Do not merge.')&&body.includes('Reply needed: yes'),
+   'structured work remains legible to legacy readers');
+for (const invalid of [{kind:'task',evidence:'OBSERVED'},{kind:'result',evidence:'UNKNOWN'},
+    {kind:'blocker',evidence:'REPORTED'},{...work,kind:'AUTO_EXECUTE'},
+    {...work,evidence:'CERTIFIED'},{...work,constraints:[null]},{...work,extra:'unknown'}]) {
+  await rejected(()=>send(envelope('INVALID-WORK',{work:invalid})),'invalid structured work rejected');
+}
 await db.exec('set role anon');
 await rejected(()=>db.query('select * from public.bus_receipts_v2'),'no direct anonymous receipt access');
 await rejected(()=>db.query('select * from public.bus_messages'),'no direct anonymous message access');

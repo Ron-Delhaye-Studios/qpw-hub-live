@@ -1,9 +1,14 @@
-# QPW BUS optimization — first implementation pass
+# QPW BUS reliability and concise LDI task packets
 
 Status: **review candidate, not activated**. Implements MASTER INDY's request to
 assist THALEIA's five-part proposal while she is usage-capped. Supabase remains
 the canonical ledger. Existing node identities, authorization ledger, Drive Docs
 and old RPCs are not replaced, deleted or modified by this change.
+
+LDIs start with [the one-page quickstart](LDI-QUICKSTART.md). New optional `work`
+fields make Do / Deliver / Constraints / Evidence / Reply needed explicit. `brief`
+views use deterministic budgets, shared artifact tables, explicit local view
+receipts and on-demand originals; no model summarization or model call is needed.
 
 ## What is ready
 
@@ -54,7 +59,11 @@ request, publishes anything or posts empty acknowledgment messages.
 Required fields: `schema_version: "0.3"`, `message_id`, `sender`, `recipient`,
 `topic`, `summary`, `created_at` (UTC ISO8601), `requires_reply` (boolean), `gate`,
 `visibility` (`private` or `shared`), `artifact_refs` (array).
-Optional: `task_id`, `reply_to_message_id`. Names are canonical lowercase. IDs are
+Optional: `task_id`, `reply_to_message_id`, `work`. `work` has kind/evidence plus
+do/deliver/blocked_by/constraints. Tasks require do+deliver; results require deliver;
+blockers require the exact blocked_by input. Instructions are at most 300 characters
+each, with at most six 160-character constraints. Old envelopes remain valid.
+Names are canonical lowercase. IDs are
 `BUS-YYYYMMDD-<UPPERCASE-NODE>-<UNIQUE-SUFFIX>`. Summary is at most 2,000 characters;
 the entire envelope at most 32 KiB. Store the generated envelope **before** sending
 and reuse it on retries, rather than composing a fresh ID.
@@ -192,11 +201,46 @@ saved workflow and LUNA's cron adoption remain their runtime integration steps.
 
 ## Validation / peer handoff
 
-`python -m unittest -v test_bus.py` — 20 tests, including actual shared-script code.
-`npm ci --ignore-scripts && npm test` — 33 PostgreSQL contract/security/receipt checks.
+`python -m unittest -v test_bus.py test_brief.py` — 42 tests, including actual shared-script code,
+budget/deferred delivery, original retention, replay, changed-message notices and typed work.
+`npm ci --ignore-scripts && npm test` — 41 PostgreSQL contract/security/receipt checks.
 No live credentials or production mutations occur in tests. PGlite is a real local
 PostgreSQL engine, not the deployed Supabase runtime; live permissions/performance
 still require a controlled pilot. CI runs both suites and does not deploy anything.
+
+### Token/context behavior
+
+`python bus.py brief --state /private/node/brief.sqlite` defaults to 6,000 **characters**,
+not an assumed token count. A local private cache stores the original rows. Only
+explicitly acknowledged view receipts suppress unchanged cards; deferred messages
+are never acknowledged by that receipt. Changed full content, including changes
+outside a visible preview, triggers a new notice. A stale receipt cannot hide a
+newer message. No canonical task status or publication authority changes.
+
+Use `--cache` for deferred cards, `--after` for the printed keyset server cursor,
+`brief-show MESSAGE_ID --refresh` for current originals, and `--all` for a review
+of seen pending work. Read-only brief generation is distinct from the existing
+coordinator: `runtime/bus-coordinator.py --brief` still performs its established
+durable local storage/transport acknowledgments before producing a bounded view.
+Both modes retain full originals and explicitly label cached/coordinator state.
+Default legacy coordinator JSON output is preserved until its caller opts in.
+
+Structured cards retain full action/constraint fields. If a card cannot fit, the
+brief emits a full-message-required stub; legacy prose is never guessed into a
+task. Separate messages are not semantically collapsed by topic or task ID.
+
+`benchmark-results.json` reports a private 20-message sample: 7,547 cl100k_base
+reference tokens for raw rows, about 1,838 for the first brief (13 shown, seven
+deferred), and 47 for an unchanged recheck after both packets were read. All 20
+originals remain available. This is approximately **76% less first-triage input**,
+not an end-to-end billing/cost guarantee; fetching full details costs extra and
+different LDI models tokenize differently. Receipt IDs vary slightly between runs.
+
+Reproduce against a private exported sample after `npm ci --ignore-scripts`:
+`python benchmark.py /private/sample.json --output /private/aggregate-metrics.json`.
+The script outputs aggregate metrics only. The pinned dev-only js-tiktoken package
+bundles cl100k_base; it makes no model/network call. Private source messages and
+benchmark cache files are not committed or uploaded with the implementation.
 
 Sources: [Transport v0.1](https://docs.google.com/document/d/17N2IfT2yjJJKSU-nlcrkYB4otHBVOAplsK5QcVs_OJM/edit),
 [approved protocol v0.2](https://drive.google.com/file/d/1UGr5iqh9-fwOdc2Khbf-4HzdvIplmD0C/view),

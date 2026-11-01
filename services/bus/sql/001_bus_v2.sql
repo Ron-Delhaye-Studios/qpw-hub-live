@@ -15,7 +15,8 @@ revoke all on public.bus_receipts_v2 from public, anon, authenticated;
 create function public.ldi_send_v2(p_token text, p_envelope jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
-  node text; k text; ref jsonb; prior public.bus_messages%rowtype; inserted_id text;
+  node text; k text; ref jsonb; work jsonb; line text; readable text;
+  prior public.bus_messages%rowtype; inserted_id text;
 begin
   node := public._ldi_who(p_token);
   if node is null then raise exception 'bad token' using errcode='28000'; end if;
@@ -29,7 +30,7 @@ begin
   end if;
   for k in select jsonb_object_keys(p_envelope) loop
     if k <> all(array['schema_version','message_id','sender','recipient','topic','summary',
-        'created_at','requires_reply','gate','visibility','artifact_refs','task_id','reply_to_message_id']) then
+        'created_at','requires_reply','gate','visibility','artifact_refs','task_id','reply_to_message_id','work']) then
       raise exception 'unknown envelope field';
     end if;
   end loop;
@@ -91,12 +92,62 @@ begin
     if ref ? 'base_commit' and (ref->>'base_commit') !~ '^[0-9a-f]{40}$' then raise exception 'bad commit'; end if;
   end loop;
 
+  readable := (p_envelope->>'summary') || E'\n\n— ' || upper(node);
+  if p_envelope ? 'work' then
+    work := p_envelope->'work';
+    if jsonb_typeof(work) is distinct from 'object' or not (work ?& array['kind','evidence']) then
+      raise exception 'invalid work fields';
+    end if;
+    for k in select jsonb_object_keys(work) loop
+      if k <> all(array['kind','evidence','do','deliver','blocked_by','constraints']) then
+        raise exception 'unknown work field';
+      end if;
+      if k <> 'constraints' and jsonb_typeof(work->k) is distinct from 'string' then
+        raise exception 'invalid work type';
+      end if;
+    end loop;
+    if (work->>'kind') not in ('task','result','blocker','decision','info')
+        or (work->>'evidence') not in ('OBSERVED','REPORTED','INFERRED','UNKNOWN') then
+      raise exception 'invalid work kind/evidence';
+    end if;
+    foreach k in array array['do','deliver','blocked_by'] loop
+      if work ? k and length(btrim(work->>k)) not between 1 and 300 then
+        raise exception 'invalid work instruction';
+      end if;
+    end loop;
+    if ((work->>'kind')='task' and not (work ?& array['do','deliver']))
+        or ((work->>'kind')='result' and not (work ? 'deliver'))
+        or ((work->>'kind')='blocker' and not (work ? 'blocked_by')) then
+      raise exception 'missing action/result/blocker detail';
+    end if;
+    if work ? 'constraints' then
+      if jsonb_typeof(work->'constraints') is distinct from 'array'
+          or jsonb_array_length(work->'constraints')>6 then raise exception 'invalid constraints'; end if;
+      for ref in select value from jsonb_array_elements(work->'constraints') loop
+        if jsonb_typeof(ref) is distinct from 'string' or length(btrim(ref #>> '{}')) not between 1 and 160 then
+          raise exception 'invalid constraint';
+        end if;
+      end loop;
+    end if;
+    readable := upper(work->>'kind');
+    foreach k in array array['do','deliver','blocked_by'] loop
+      if work ? k then
+        readable := readable || E'\n' || case k when 'do' then 'Do' when 'deliver' then 'Deliver' else 'Blocked by' end || ': ' || (work->>k);
+      end if;
+    end loop;
+    for line in select value from jsonb_array_elements_text(coalesce(work->'constraints','[]'::jsonb)) loop
+      readable := readable || E'\nConstraint: ' || line;
+    end loop;
+    readable := readable || E'\nEvidence (sender): ' || (work->>'evidence') || E'\nContext: ' || (p_envelope->>'summary')
+      || E'\nReply needed: ' || case when (p_envelope->>'requires_reply')::boolean then 'yes' else 'no' end || E'\n— ' || upper(node);
+  end if;
+
   insert into public.bus_messages
     (message_id,sender,recipient,topic,task_id,reply_to_message_id,status,requires_reply,payload)
   values (p_envelope->>'message_id',node,p_envelope->>'recipient',p_envelope->>'topic',
     p_envelope->>'task_id',p_envelope->>'reply_to_message_id','waiting',
     (p_envelope->>'requires_reply')::boolean,
-    jsonb_build_object('body',p_envelope->>'summary' || E'\n\n— ' || upper(node),
+    jsonb_build_object('body',readable,
                        'via','bus-v2','envelope',p_envelope))
   on conflict (message_id) do nothing returning message_id into inserted_id;
   if inserted_id is null then

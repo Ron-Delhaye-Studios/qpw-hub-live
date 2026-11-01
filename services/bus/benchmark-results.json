@@ -1,0 +1,18 @@
+{
+  "sample": "private local message sample; source text not included",
+  "rows": 20,
+  "budget_characters": 6000,
+  "raw_characters": 26266,
+  "first_brief_characters": 5741,
+  "first_shown": 13,
+  "first_deferred": 7,
+  "raw_tokens": 7547,
+  "first_tokens": 1838,
+  "triage_token_reduction_percent": 75.6,
+  "pages_to_see_all": 2,
+  "all_messages_retained": true,
+  "repeat_tokens": 47,
+  "repeat_seen_pending": 20,
+  "tokenizer": "js-tiktoken 1.0.21 / cl100k_base",
+  "limit": "Triage-input comparison only. Full-detail fetches cost extra. Reference encoding, not universal model billing or end-to-end cost savings."
+}

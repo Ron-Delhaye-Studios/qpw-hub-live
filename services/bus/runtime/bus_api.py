@@ -24,7 +24,7 @@ import urllib.error
 from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from bus import validate,read_envelope
+from bus import validate,read_envelope,readable_body
 
 sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/templates/skill/bin")
 from dynamic_credentials import (
@@ -89,14 +89,22 @@ def cmd_send(args):
 def cmd_inbox(args):
     params = {
         "recipient": f"eq.{args.ldi}",
-        "order": "created_at.asc",
+        "order": "created_at.asc,message_id.asc",
         "limit": str(args.limit),
         "select": "message_id,sender,recipient,topic,task_id,reply_to_message_id,"
                   "status,requires_reply,created_at,payload",
     }
     if args.status:
         params["status"] = f"eq.{args.status}"
+    if getattr(args,'after',None):
+        from brief import cursor_filter
+        params['or']=cursor_filter(args.after)
     rows = call("GET", f"/{TABLE}", params=params)
+    if getattr(args,'brief',False):
+        from brief import BriefStore,render_packet
+        store=BriefStore(args.brief_state) if args.brief_state else None
+        print(render_packet(rows,budget=args.budget_chars,store=store,page_limit=args.limit)['text'],end='')
+        return
     if args.json:
         print(json.dumps(rows))
         return
@@ -132,7 +140,7 @@ def send_envelope(e):
     payload={'message_id':e['message_id'],'sender':e['sender'],'recipient':e['recipient'],
              'topic':e['topic'],'task_id':e.get('task_id'),'reply_to_message_id':e.get('reply_to_message_id'),
              'status':'waiting','requires_reply':e['requires_reply'],
-             'payload':{'body':e['summary']+'\n\n— '+e['sender'].upper(),'via':'bus-v2','envelope':e}}
+             'payload':{'body':readable_body(e),'via':'bus-v2','envelope':e}}
     rows=call('POST','/'+TABLE,params={'on_conflict':'message_id'},payload=payload,
               prefer='resolution=ignore-duplicates,return=representation')
     if rows:
@@ -161,7 +169,10 @@ def main():
     i.add_argument("ldi")
     i.add_argument("--status", default="waiting")
     i.add_argument("--limit", type=int, default=20)
-    i.add_argument('--json',action='store_true',help='Structured full rows; no body truncation')
+    output=i.add_mutually_exclusive_group()
+    output.add_argument('--json',action='store_true',help='Structured full rows; no body truncation')
+    output.add_argument('--brief',action='store_true',help='Bounded LDI task cards; originals remain available')
+    i.add_argument('--brief-state');i.add_argument('--budget-chars',type=int,default=6000);i.add_argument('--after')
 
     e=sub.add_parser('send-envelope')
     e.add_argument('file')
