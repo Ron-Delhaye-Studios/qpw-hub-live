@@ -134,9 +134,13 @@ class BriefStore:
 
     def prepare(self,receipt,rows):
         # Save full originals before returning a view. No task or BUS receipt is modified.
+        shown=compact([[row['message_id'],fingerprint(row)] for row in rows])
         with sqlite3.connect(self.path) as db:
+            prior=db.execute('select receipt from packets where shown_json=? and acknowledged=0 limit 1',(shown,)).fetchone()
+            if prior is not None:return prior[0]
             db.execute('insert into packets(receipt,shown_json) values(?,?)',
-                       (receipt,compact([[row['message_id'],fingerprint(row)] for row in rows])))
+                       (receipt,shown))
+        return receipt
 
     def ack(self,receipt):
         with sqlite3.connect(self.path) as db:
@@ -221,8 +225,8 @@ def render_packet(rows,*,budget=6000,store=None,include_seen=False,page_limit=No
         shown.append(row)
     stub=False
     if changed and not shown:shown=[changed[0]];stub=True
+    if store and shown:receipt=store.prepare(receipt,shown)
     text=render_candidate(shown,receipt,len(changed),seen_count,len(changed)-len(shown),stub=stub,next_cursor=cursor,source=source)
     if len(text)>budget:raise ValueError('message metadata exceeds minimum packet budget; use a larger budget')
-    if store and shown:store.prepare(receipt,shown)
     return {'text':text,'characters':len(text),'shown_ids':[r['message_id'] for r in shown],
             'deferred':len(changed)-len(shown),'seen_pending':seen_count,'receipt':receipt,'next_cursor':cursor}

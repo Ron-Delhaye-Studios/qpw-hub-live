@@ -40,6 +40,7 @@ class BriefTests(unittest.TestCase):
     def test_read_does_not_mark_seen_or_complete_task(self):
         row=task_row();first=render_packet([row],store=self.store);second=render_packet([row],store=self.store)
         self.assertEqual(first['shown_ids'],second['shown_ids'])
+        self.assertEqual(first['receipt'],second['receipt'])
         self.assertEqual(self.store.show(row['message_id'])['message']['status'],'waiting')
     def test_explicit_view_ack_suppresses_only_unchanged_view(self):
         row=task_row();p=render_packet([row],store=self.store);result=self.store.ack(p['receipt'])
