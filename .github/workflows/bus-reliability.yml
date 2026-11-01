@@ -1,0 +1,26 @@
+name: BUS reliability checks
+on:
+  pull_request:
+    paths: ['services/bus/**', '.github/workflows/bus-reliability.yml']
+  push:
+    branches: [main]
+    paths: ['services/bus/**', '.github/workflows/bus-reliability.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m unittest -v test_bus.py
+        working-directory: services/bus
+      - run: npm ci --ignore-scripts
+        working-directory: services/bus
+      - run: npm test
+        working-directory: services/bus
