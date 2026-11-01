@@ -1,0 +1,7 @@
+{
+  "name": "qpw-bus-verification",
+  "private": true,
+  "type": "module",
+  "scripts": {"test": "node test_sql.mjs"},
+  "devDependencies": {"@electric-sql/pglite": "0.5.14", "js-tiktoken": "1.0.21"}
+}
