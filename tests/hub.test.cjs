@@ -16,6 +16,10 @@ function harness(fetcher,stored={}){
 const response=(data,status=200)=>({ok:status>=200&&status<300,status,json:async()=>data});
 const state=()=>({fetched_at:new Date().toISOString(),tasks:[{task_id:'WO-5',title:'Build hub',owner:'codex',status:'in_progress',next_action:'Review'}],messages:[]});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
+test('frontend contains no PIN entry, enrollment form or PIN API calls',()=>{
+  assert.doesNotMatch(html,/id="(?:signin|passwordsetup|setupform|passwordbutton)"/);
+  assert.doesNotMatch(html,/api=(?:pin-login|setup-password)/);
+});
 test('Needs you uses explicit Indy ownership, not all blocked tasks or all approvals',()=>{
   const result=board.needs([{owner:'codex',status:'blocked'},{owner:'master-indy',status:'blocked'}],[{recipient:'luna',status:'awaiting_approval'},{recipient:'master-indy',status:'awaiting_approval'}]);
   assert.equal(result.length,2);assert.equal(result[0].owner,'master-indy');assert.equal(result[1].recipient,'master-indy');

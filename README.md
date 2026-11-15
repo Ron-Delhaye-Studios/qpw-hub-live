@@ -4,9 +4,11 @@ QPW Hub static page (public shell, token-gated API)
 ## WO#5: primary Hub
 
 Three primary sections: **Needs you · Active · Work orders**. Messages and sending
-remain below the board. Use an existing private key directly; PIN login and optional
-PIN setup remain available. Private keys stay in session storage and are cleared by
-Lock. No private key or privileged database credential is shipped with the site.
+remain below the board. Use an existing private key directly. PIN forms and
+enrollment have been removed from the frontend. Existing saved owner sessions
+continue to work until they expire or are locked. Private keys stay in session
+storage and are cleared by Lock. No private key or privileged database credential
+is shipped with the site.
 
 The existing `qpw-hub-live` Edge Function is the sole data path. Reads refresh every
 30 seconds while the page is visible and when returning to the page. The source
@@ -30,6 +32,12 @@ They are behavioral checks, not browser layout or authenticated hosted acceptanc
 
 ### Known backend limits
 
+- November 15 read-only diagnosis: one Auth account exists, but zero accounts have
+  the Hub owner marker. Deployed v8 PIN login requires exactly one confirmed owner,
+  while its setup route refuses enrollment once any Auth account exists. This
+  combination blocks both PIN login and enrollment. Direct key authentication is
+  independent; the user's key has not been tested. Do not grant an arbitrary
+  existing account owner privileges or disable BUS authorization as a workaround.
 - State returns the latest 100 tasks and 200 messages; this is not the entire
   unresolved queue. Messages displays the latest 25 of that response.
 - Deployed v8 selects `body:payload->>body`, omitting other structured payload
@@ -40,7 +48,7 @@ They are behavioral checks, not browser layout or authenticated hosted acceptanc
 
 ### Hosted acceptance after approved merge
 
-LUNA verifies on phone and MSI desktop: direct key unlock without PIN setup,
+LUNA verifies on phone and MSI desktop: direct key unlock with no PIN forms or setup,
 all three sections from real state, correct decision ownership, age/stale/recovery,
 Lock and reload, and an authorized unchanged-message retry without duplication.
 Verify one work order through a result with artifact reference/version and verifier.
